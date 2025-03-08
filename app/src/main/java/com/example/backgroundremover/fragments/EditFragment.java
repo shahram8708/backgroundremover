@@ -2,11 +2,12 @@ package com.example.backgroundremover.fragments;
 
 import android.Manifest;
 import android.app.ProgressDialog;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.LayoutInflater;
@@ -25,8 +26,15 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.example.backgroundremover.R;
 import com.example.backgroundremover.adapters.BackgroundAdapter;
 import com.example.backgroundremover.viewmodel.MainViewModel;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class EditFragment extends Fragment implements BackgroundAdapter.OnBackgroundClickListener {
 
@@ -67,25 +75,70 @@ public class EditFragment extends Fragment implements BackgroundAdapter.OnBackgr
         recyclerBackgrounds.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
         recyclerBackgrounds.setAdapter(adapter);
 
-        // Process the original image and simulate background removal
+        // Process the original image and remove background using remove.bg API
         Bitmap original = viewModel.getOriginalImage().getValue();
         if (original != null) {
             progressDialog.show();
-            // Dummy background removal (replace with your AI-based code)
-            Bitmap processed = removeBackground(original);
-            viewModel.setProcessedImage(processed);
-            imagePreview.setImageBitmap(processed);
-            progressDialog.dismiss();
+            // Start async background removal using remove.bg API
+            new RemoveBgTask().execute(original);
         }
 
         btnSave.setOnClickListener(v -> saveImage());
     }
 
-    // Dummy background removal method – replace with your AI integration
-    private Bitmap removeBackground(Bitmap original) {
-        // In a real implementation, process the bitmap using ML Kit/TensorFlow Lite/OpenCV or an API.
-        // Here we simply return the original image.
-        return original;
+    /**
+     * AsyncTask to call the remove.bg API to remove the background from the image.
+     */
+    private class RemoveBgTask extends AsyncTask<Bitmap, Void, Bitmap> {
+        @Override
+        protected Bitmap doInBackground(Bitmap... bitmaps) {
+            Bitmap inputBitmap = bitmaps[0];
+            try {
+                // Convert bitmap to JPEG byte array
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                inputBitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
+                byte[] imageBytes = baos.toByteArray();
+
+                OkHttpClient client = new OkHttpClient();
+
+                // Build the multipart request body
+                RequestBody requestBody = new MultipartBody.Builder()
+                        .setType(MultipartBody.FORM)
+                        .addFormDataPart("image_file", "image.jpg",
+                                RequestBody.create(MediaType.parse("image/jpeg"), imageBytes))
+                        .addFormDataPart("size", "auto")
+                        .build();
+
+                // Create the request using the provided remove.bg API key
+                Request request = new Request.Builder()
+                        .url("https://api.remove.bg/v1.0/removebg")
+                        .addHeader("X-Api-Key", "JKaN44MGWpnVgimc9M61qBum")
+                        .post(requestBody)
+                        .build();
+
+                Response response = client.newCall(request).execute();
+                if (!response.isSuccessful()) {
+                    return null;
+                }
+                byte[] resultBytes = response.body().bytes();
+                return BitmapFactory.decodeByteArray(resultBytes, 0, resultBytes.length);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(Bitmap resultBitmap) {
+            progressDialog.dismiss();
+            if (resultBitmap != null) {
+                viewModel.setProcessedImage(resultBitmap);
+                imagePreview.setImageBitmap(resultBitmap);
+            } else {
+                Toast.makeText(getContext(), "Background removal failed", Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     // Combine the processed (foreground) image with a selected background
